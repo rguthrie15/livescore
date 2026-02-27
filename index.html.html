@@ -406,7 +406,7 @@ function parseGames(data, lg, sp, dot, label){
   }).filter(Boolean);
 }
 
-// ═══════════════════════════════════════════════════════════════════
+// ═════════════════════���═════════════════════════════════════════════
 // EXTERNAL ODDS
 // ═══════════════════════════════════════════════════════════════════
 async function loadAllExternalOdds(){
@@ -720,7 +720,7 @@ function setTab(k){activeTab=k;buildTabs();renderScores();}
 
 // ═══════════════════════════════════════════════════════════════════
 // RENDER SCORES
-// ═══════════════════════════════════════════════════════════════════
+// ═════════════════════════════════════════════���═════════════════════
 function renderScores(){
   clearSkeleton();
   const el  = document.getElementById('scoresGrid');
@@ -976,6 +976,10 @@ fetchDate(selDate).then(()=>{
 });
 </script>
 
+<script>
+  window.si = window.si || function () { (window.siq = window.siq || []).push(arguments); };
+</script>
+<script defer src="/_vercel/speed-insights/script.js"></script>
 
 </body>
 </html>
