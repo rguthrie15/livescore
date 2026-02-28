@@ -3031,13 +3031,11 @@ async function renderContestList(){
     el.innerHTML=`<div class="news-loading">No upcoming games available for pick'em today.<br><small>Check back before games start.</small></div>`;
     return;
   }
-  // Load my picks for each contest
+  // Load my picks for each contest from localStorage
   const myPicks={};
   for(const c of contests){
-    try{
-      const res=await window.storage.get(`contest:${c.id}:picks:${currentUser?.id}`,true);
-      myPicks[c.id]=res?JSON.parse(res.value):{};
-    }catch{myPicks[c.id]={};}
+    const lsKey='ls_contest_'+c.id+'_'+(currentUser?.id||'anon');
+    try{myPicks[c.id]=JSON.parse(localStorage.getItem(lsKey)||'{}');}catch{myPicks[c.id]={};}
   }
   el.innerHTML=`<div class="contests-grid">${contests.map(c=>{
     const mp=myPicks[c.id]||{};
@@ -3067,27 +3065,26 @@ async function renderContestDetail(contestId){
   const contestName=isDaily?`Daily Pick'em`:`Weekly Pick'em`;
   const games=allGames.filter(g=>g.isPre).slice(0,10);
 
-  // Load my picks
+  // Load my picks from localStorage
+  const lsKey='ls_contest_'+contestId+'_'+(currentUser?.id||'anon');
   let myPicks={};
-  try{const r=await window.storage.get(`contest:${contestId}:picks:${currentUser?.id}`,true);myPicks=r?JSON.parse(r.value):{};}catch{}
+  try{myPicks=JSON.parse(localStorage.getItem(lsKey)||'{}');}catch{}
 
-  // Load leaderboard
-  let lbEntries=[];
+  // Build leaderboard from all ls_contest_ keys for this contest
+  const lbEntries=[];
   try{
-    const keys=await window.storage.list(`contest:${contestId}:picks:`,true);
-    if(keys?.keys){
-      const all=await Promise.allSettled(keys.keys.map(k=>window.storage.get(k,true)));
-      lbEntries=all.filter(r=>r.status==='fulfilled'&&r.value).map(r=>{
-        try{
-          const picks=JSON.parse(r.value.value);
-          const userId=r.value.key.split(':').pop();
-          const correct=Object.values(picks).filter(p=>p.result==='correct').length;
-          const wrong=Object.values(picks).filter(p=>p.result==='wrong').length;
-          const name=picks._name||userId.slice(0,8);
-          return{userId,name,picks,correct,wrong,total:Object.keys(picks).filter(k=>k!=='_name').length};
-        }catch{return null;}
-      }).filter(Boolean).sort((a,b)=>b.correct-a.correct||a.wrong-b.wrong);
+    for(let i=0;i<localStorage.length;i++){
+      const k=localStorage.key(i);
+      if(!k||!k.startsWith('ls_contest_'+contestId+'_')) continue;
+      const userId=k.replace('ls_contest_'+contestId+'_','');
+      let ep={};
+      try{ep=JSON.parse(localStorage.getItem(k)||'{}');}catch{continue;}
+      const correct=Object.values(ep).filter(p=>p&&p.result==='correct').length;
+      const wrong=Object.values(ep).filter(p=>p&&p.result==='wrong').length;
+      const total=Object.keys(ep).filter(k2=>k2!=='_name').length;
+      lbEntries.push({userId,name:ep._name||userId.slice(0,8),correct,wrong,total});
     }
+    lbEntries.sort((a,b)=>b.correct-a.correct||a.wrong-b.wrong);
   }catch{}
 
   el.innerHTML=`
@@ -3109,8 +3106,8 @@ async function renderContestDetail(contestId){
           <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted)">${g.odds?.spread||''}</div>
         </div>
         <div class="contest-game-pick">
-          <button class="contest-pick-btn ${aBtn} ${resultA}" onclick="contestPick('${contestId}','${g.id}','${g.away.name}')" ${locked?'disabled':''} data-contest="${contestId}" data-game="${g.id}" data-side="away">${g.away.abbr}</button>
-          <button class="contest-pick-btn ${hBtn} ${resultH}" onclick="contestPick('${contestId}','${g.id}','${g.home.name}')" ${locked?'disabled':''} data-contest="${contestId}" data-game="${g.id}" data-side="home">${g.home.abbr}</button>
+          <button class="contest-pick-btn ${aBtn} ${resultA}" data-cpcontest="${contestId}" data-cpgame="${g.id}" data-cpside="away" data-cpname="${g.away.name.replace(/"/g,'&quot;')}" ${locked?'disabled':''}>${g.away.abbr}</button>
+          <button class="contest-pick-btn ${hBtn} ${resultH}" data-cpcontest="${contestId}" data-cpgame="${g.id}" data-cpside="home" data-cpname="${g.home.name.replace(/"/g,'&quot;')}" ${locked?'disabled':''}>${g.home.abbr}</button>
         </div>
       </div>`;
     }).join('')}
@@ -3133,24 +3130,32 @@ async function renderContestDetail(contestId){
 
 async function contestPick(contestId,gameId,side){
   if(!currentUser) return;
+  const lsKey='ls_contest_'+contestId+'_'+currentUser.id;
   let myPicks={};
-  try{const r=await window.storage.get(`contest:${contestId}:picks:${currentUser.id}`,true);myPicks=r?JSON.parse(r.value):{};}catch{}
-  // Toggle off
+  try{myPicks=JSON.parse(localStorage.getItem(lsKey)||'{}');}catch{}
+  // Toggle: clicking same side again removes the pick
   if(myPicks[gameId]&&myPicks[gameId].side===side){
     delete myPicks[gameId];
   } else {
     myPicks[gameId]={side,result:'pending',locked:false};
   }
   myPicks._name=currentUser.name;
-  try{await window.storage.set(`contest:${contestId}:picks:${currentUser.id}`,JSON.stringify(myPicks),true);}catch{}
-  // Optimistic UI update
-  document.querySelectorAll(`[data-contest="${contestId}"][data-game="${gameId}"]`).forEach(btn=>{
-    btn.classList.remove('selected');
-    if(myPicks[gameId]&&btn.dataset.side===(myPicks[gameId].side===gameId?'home':'away')||btn.textContent.trim()===side.split(' ').pop()){}
-  });
-  // Re-render
+  localStorage.setItem(lsKey,JSON.stringify(myPicks));
+  // Re-render with updated picks
   await renderContestDetail(contestId);
 }
+
+// Delegated click handler for contest pick buttons — avoids inline onclick with team names
+document.addEventListener('click',function(e){
+  const btn=e.target.closest('.contest-pick-btn');
+  if(!btn) return;
+  const contestId=btn.dataset.cpcontest;
+  const gameId=btn.dataset.cpgame;
+  const side=btn.dataset.cpname; // full team name stored in data-cpname
+  if(!contestId||!gameId||!side) return;
+  e.stopPropagation();
+  contestPick(contestId,gameId,side);
+});
 
 // ═══════════════════════════════════════════════════════
 // INIT
